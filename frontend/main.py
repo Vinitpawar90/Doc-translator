@@ -25,6 +25,231 @@ st.set_page_config(
     layout="wide"
 )
 
+_COPY_BUTTON_HTML = """
+<div class="copy-wrap">
+    <span class="copy-feedback" role="status" aria-live="polite"></span>
+    <button
+        class="copy-circle"
+        type="button"
+        title="Copy translation"
+        aria-label="Copy translation"
+    >
+        <svg class="icon-svg clipboard-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+        </svg>
+        <svg class="icon-svg check-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polyline class="check-path" points="20 6 9 17 4 12"></polyline>
+        </svg>
+    </button>
+</div>
+"""
+
+_COPY_BUTTON_CSS = """
+:host {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    width: 100%;
+    height: 52px;
+}
+
+.copy-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.6rem;
+    width: 100%;
+    height: 52px;
+}
+
+.copy-circle {
+    position: relative;
+    width: 40px;
+    height: 40px;
+    flex: 0 0 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #64748b;
+    background: #e8edf5;
+    border: 1px solid #d1d9e6;
+    border-radius: 50%;
+    cursor: pointer;
+    box-shadow: 3px 3px 6px #c5ccd8, -3px -3px 6px #ffffff;
+    transition: transform 0.15s ease, box-shadow 0.2s ease, border-color 0.25s ease;
+    outline: none;
+}
+
+.copy-circle:hover {
+    color: #334155;
+    transform: translateY(-1px);
+}
+
+.copy-circle:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.copy-circle:disabled:hover {
+    color: #64748b;
+    transform: none;
+}
+
+.copy-circle:focus-visible {
+    outline: 2px solid #55766b;
+    outline-offset: 3px;
+}
+
+.copy-circle:active {
+    transform: scale(0.92);
+    box-shadow: inset 2px 2px 5px #c5ccd8, inset -2px -2px 5px #ffffff;
+}
+
+.copy-circle::after {
+    content: "";
+    position: absolute;
+    inset: -3px;
+    border-radius: 50%;
+    border: 2px solid #10b981;
+    opacity: 0;
+    transform: scale(0.8);
+    pointer-events: none;
+}
+
+.copy-circle.copied {
+    border-color: #10b981;
+    box-shadow: 0 0 10px rgba(16, 185, 129, 0.25), inset 1px 1px 3px #ffffff;
+}
+
+.copy-circle.copy-error {
+    border-color: #dc2626;
+    color: #b91c1c;
+}
+
+.copy-circle.copied::after {
+    animation: ripple-pulse 0.6s ease-out forwards;
+}
+
+@keyframes ripple-pulse {
+    0% { opacity: 0.8; transform: scale(0.85); }
+    100% { opacity: 0; transform: scale(1.35); }
+}
+
+.icon-svg {
+    position: absolute;
+    transition: opacity 0.2s ease, transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.clipboard-icon {
+    opacity: 1;
+    transform: scale(1) rotate(0deg);
+}
+
+.copy-circle.copied .clipboard-icon {
+    opacity: 0;
+    transform: scale(0.5) rotate(-20deg);
+}
+
+.check-icon {
+    opacity: 0;
+    transform: scale(0.5);
+}
+
+.copy-circle.copied .check-icon {
+    opacity: 1;
+    transform: scale(1);
+}
+
+.check-path {
+    stroke-dasharray: 24;
+    stroke-dashoffset: 24;
+}
+
+.copy-circle.copied .check-path {
+    animation: draw-check 0.35s 0.1s ease-out forwards;
+}
+
+@keyframes draw-check {
+    to { stroke-dashoffset: 0; }
+}
+
+.copy-feedback {
+    color: #55766b;
+    font: 0.8rem "Segoe UI", sans-serif;
+}
+
+.copy-feedback.copy-error {
+    color: #b91c1c;
+}
+"""
+
+_COPY_BUTTON_JS = """
+export default function(component) {
+    const { data, parentElement } = component;
+    const button = parentElement.querySelector(".copy-circle");
+    const feedback = parentElement.querySelector(".copy-feedback");
+    if (!button || !feedback) return;
+
+    const text = typeof data?.text === "string" ? data.text : "";
+    button.onclick = null;
+    button.classList.remove("copied", "copy-error");
+    feedback.classList.remove("copy-error");
+    feedback.textContent = "";
+    button.disabled = text.length === 0;
+    button.title = button.disabled
+        ? "Translate text first to enable copying."
+        : "Copy translation";
+    button.setAttribute("aria-label", button.title);
+
+    if (button.disabled) {
+        return;
+    }
+
+    let resetTimer;
+    button.onclick = async () => {
+        try {
+            await navigator.clipboard.writeText(text);
+            button.classList.remove("copied", "copy-error");
+            feedback.classList.remove("copy-error");
+            void button.offsetWidth;
+            button.classList.add("copied");
+            button.title = "Copied to clipboard";
+            button.setAttribute("aria-label", "Copied to clipboard");
+            feedback.textContent = "Copied";
+
+            clearTimeout(resetTimer);
+            resetTimer = setTimeout(() => {
+                button.classList.remove("copied");
+                button.title = "Copy translation";
+                button.setAttribute("aria-label", "Copy translation");
+                feedback.textContent = "";
+            }, 1600);
+        } catch (error) {
+            button.classList.remove("copied");
+            button.classList.add("copy-error");
+            feedback.classList.add("copy-error");
+            button.title = "Copy failed. Check browser clipboard permissions.";
+            button.setAttribute("aria-label", button.title);
+            feedback.textContent = button.title;
+            console.error("Could not copy the translated text.", error);
+        }
+    };
+
+    return () => {
+        button.onclick = null;
+        clearTimeout(resetTimer);
+    };
+}
+"""
+
+_COPY_BUTTON = st.components.v2.component(
+    "translation_copy_button",
+    html=_COPY_BUTTON_HTML,
+    css=_COPY_BUTTON_CSS,
+    js=_COPY_BUTTON_JS
+)
+
 st.html(
     """
     <style>
@@ -57,9 +282,10 @@ st.html(
     }
 
     [data-testid="stMainBlockContainer"] {
-        width: min(90vw, 920px) !important;
+        width: min(920px, calc(100% - 2rem)) !important;
         max-width: 920px !important;
-        min-height: min(90vw, 920px);
+        min-height: 0;
+        flex-shrink: 0;
         box-sizing: border-box;
         margin: 4.5rem auto 1rem !important;
         padding: 1rem !important;
@@ -67,15 +293,6 @@ st.html(
         border-radius: 22px;
         background: #ffffff !important;
         box-shadow: 0 16px 42px var(--shadow);
-    }
-
-    @media (max-width: 640px) {
-        [data-testid="stMainBlockContainer"] {
-            width: calc(100vw - 1rem) !important;
-            min-height: auto;
-            margin: 4.5rem auto 0.5rem !important;
-            padding: 1rem !important;
-        }
     }
 
     .translator-hero {
@@ -109,7 +326,7 @@ st.html(
     }
 
     .translator-hero h1 {
-        font-size: clamp(2.5rem, 4vw, 3.8rem);
+        font-size: 3rem;
         line-height: 0.96;
         letter-spacing: -0.055em;
         font-weight: 500;
@@ -148,17 +365,18 @@ st.html(
 
     .translator-site-header {
         display: flex;
+        flex-wrap: wrap;
         align-items: center;
         justify-content: space-between;
         min-height: 54px;
-        width: 100vw;
         box-sizing: border-box;
         position: fixed;
         top: 0;
         left: 0;
+        right: 0;
         z-index: 1000001;
         margin: 0;
-        padding: 0.45rem clamp(0.75rem, 1.2vw, 1.25rem) 0.65rem;
+        padding: 0.45rem 1rem 0.65rem;
         border-bottom: 1px solid #edf0ec;
         background: lightblue;
         font-family: "Segoe UI", sans-serif;
@@ -267,6 +485,44 @@ st.html(
         display: none !important;
     }
 
+    [data-testid="stExpander"] > details > summary [data-testid="stMarkdownContainer"],
+    [data-testid="stExpander"] > details > summary [data-testid="stMarkdownContainer"] * {
+        color: #ffffff !important;
+    }
+
+    .neumorphic-track {
+        width: min(82%, 600px);
+        height: 34px;
+        background: #dde3ec;
+        border-radius: 999px;
+        box-shadow: inset 2px 2px 5px #c5ccd8, inset -2px -2px 5px #ffffff;
+        padding: 3px;
+        position: relative;
+        display: flex;
+        align-items: center;
+        margin: 16px auto;
+        box-sizing: border-box;
+    }
+
+    .neumorphic-fill {
+        height: 100%;
+        border-radius: 999px;
+        background: linear-gradient(90deg, #eadcf8 0%, #dcf4f5 50%, #dafae6 100%);
+        box-shadow: 0 2px 6px rgba(175, 205, 215, 0.55), inset 0 1px 2px #ffffff;
+        transition: width 0.25s ease;
+    }
+
+    .neumorphic-text {
+        position: absolute;
+        left: 16px;
+        font-family: "Courier New", Consolas, monospace;
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 0.5px;
+        color: #7c8594;
+        pointer-events: none;
+    }
+
     .stMarkdownBadge {
         background-color: #e8eee9 !important;
         color: #48665c !important;
@@ -330,6 +586,11 @@ st.html(
         border-color: rgba(33, 58, 54, 0.2);
     }
 
+    .st-key-deepl_swap_languages [data-testid="stIconMaterial"] {
+        color: #000000 !important;
+        opacity: 1 !important;
+    }
+
     .stButton > button[kind="primary"],
     .stDownloadButton > button {
         background: linear-gradient(135deg, #8da49a, #71897f);
@@ -349,11 +610,13 @@ st.html(
     div[data-testid="stLayoutWrapper"]:has(
         > [data-testid="stVerticalBlock"] [data-testid="stSelectbox"]
     ) {
-        border: 1px solid var(--line);
-        border-radius: 16px;
+        width: min(95%, 850px);
+        margin-inline: auto;
+        border: 2px solid var(--line);
+        border-radius: 25px;
         background-color: #ffffff !important;
         box-shadow: 0 8px 24px var(--shadow);
-        padding: 0.65rem;
+        padding: 0.40rem;
     }
 
     div[data-testid="stFileUploader"] {
@@ -366,7 +629,7 @@ st.html(
         align-items: center;
         justify-content: center;
         gap: 0.45rem;
-        min-height: 185px;
+        min-height: 140px;
         padding: 1rem !important;
         border: 1px dashed #cbd9ce !important;
         border-radius: 12px !important;
@@ -523,6 +786,7 @@ st.html(
 
     .translation-panel-header {
         display: flex;
+        flex-wrap: wrap;
         justify-content: space-between;
         align-items: center;
         margin: 0.15rem 0 0.7rem;
@@ -531,8 +795,8 @@ st.html(
 
     .translation-panel-title {
         margin: 0;
-        font-size: 1.4rem;
-        line-height: 1.1;
+        font-size: 1.6rem;
+        line-height: 1.6;
         font-family: "Segoe UI", sans-serif;
         color: var(--text);
         font-weight: 600;
@@ -544,13 +808,14 @@ st.html(
         letter-spacing: 0.14em;
         font-size: 0.62rem;
         font-family: "Segoe UI", sans-serif;
-        white-space: nowrap;
+        white-space: normal;
     }
 
     .translation-panel-note::before {
         content: "* ";
         color: var(--text);
     }
+
     </style>
     """
 )
@@ -575,7 +840,7 @@ st.markdown(
     <section class="translator-hero">
         <div class="translator-eyebrow">Your words, anywhere</div>
         <h1>Making Every Document Speak <span class="accent">feel  Your Language.</span></h1>
-        <p>Translate your documents while keeping the meaning clear and natural.</p>
+        <!--<p>Translate your documents while keeping the meaning clear and natural.</p>-->
     </section>
     """,
     unsafe_allow_html=True
@@ -666,6 +931,26 @@ def translate_text(api_base, api_key, text, target_lang, source_lang):
     return translations[0]["text"]
 
 
+def update_progress_bar(placeholder, percent, label="PROGRESS"):
+    percent = max(0, min(100, int(percent)))
+    placeholder.markdown(
+        f"""
+        <div
+            class="neumorphic-track"
+            role="progressbar"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            aria-valuenow="{percent}"
+            aria-label="{label}: {percent}%"
+        >
+            <div class="neumorphic-fill" style="width: {percent}%;"></div>
+            <div class="neumorphic-text">{label}: {percent}%</div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+
 def translate_document(
     api_base,
     api_key,
@@ -707,6 +992,10 @@ def translate_document(
     deadline = time.monotonic() + 600
     status_poll_interval = 2
     with st.status("Translating your document with DeepL...", expanded=True) as status:
+        progress_started_at = time.monotonic()
+        progress_percent = 0
+        progress_placeholder = st.empty()
+        update_progress_bar(progress_placeholder, progress_percent)
         while time.monotonic() < deadline:
             time.sleep(status_poll_interval)
             status_response = requests.post(
@@ -720,6 +1009,7 @@ def translate_document(
             state = status_data.get("status")
 
             if state == "done":
+                update_progress_bar(progress_placeholder, 100, "COMPLETE")
                 status.update(
                     label="Document translation complete",
                     state="complete",
@@ -736,12 +1026,21 @@ def translate_document(
                     f"DeepL returned an unexpected document status: {state!r}"
                 )
             remaining = status_data.get("seconds_remaining")
-            if remaining is None:
-                status.write(f"Status: {state}")
-            else:
-                status.write(
-                    f"Status: {state} · about {remaining} seconds remaining"
+            elapsed = time.monotonic() - progress_started_at
+            if remaining is not None:
+                remaining = max(float(remaining), 0)
+                estimated_percent = int(
+                    100 * elapsed / max(elapsed + remaining, 1)
                 )
+            else:
+                estimated_percent = int(
+                    100 * elapsed / 600
+                )
+            progress_percent = max(
+                progress_percent,
+                min(estimated_percent, 99)
+            )
+            update_progress_bar(progress_placeholder, progress_percent)
         else:
             raise TimeoutError("Document translation timed out after 10 minutes.")
 
@@ -783,6 +1082,7 @@ def render_file_translation(
     if saved_result and saved_result["signature"] != signature:
         st.session_state.pop(state_key, None)
 
+    st.success("✅File uploaded.")
     st.caption(
         f"Selected: **{uploaded_file.name}** · "
         f"{uploaded_file.size / (1024 * 1024):.2f} MB"
@@ -827,7 +1127,7 @@ def render_file_translation(
 
     saved_result = st.session_state.get(state_key)
     if saved_result and saved_result["signature"] == signature:
-        st.success(f"Translated into {target_name}.")
+        st.success(f"Translation completed. Translated into {target_name}.")
         st.download_button(
             "Download translated DOCX",
             data=saved_result["data"],
@@ -901,7 +1201,7 @@ with st.container(border=True):
     )
     with source_col:
         source_name = st.selectbox(
-            "Translate from",
+            "Choose Your Language",
             ["Detect automatically", *source_options],
             key="deepl_source_language"
         )
@@ -1002,6 +1302,8 @@ with text_tab:
         with output_col:
             st.subheader("Translation")
             st.caption(f"Translation in {target_name}")
+            if translated_text:
+                st.success("Translation completed.")
             st.session_state["deepl_text_result_display"] = translated_text
             st.text_area(
                 "Translation",
@@ -1009,6 +1311,12 @@ with text_tab:
                 key="deepl_text_result_display",
                 disabled=True,
                 placeholder="Your translation will appear here."
+            )
+            _COPY_BUTTON(
+                key="deepl_translation_copy",
+                data={"text": translated_text},
+                width="stretch",
+                height=52
             )
             if translated_text:
                 st.download_button(
