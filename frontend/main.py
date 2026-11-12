@@ -773,6 +773,22 @@ st.html(
         border-radius: 12px;
     }
 
+    [data-testid="stAlert"]:has(
+        [data-testid="stAlertContentSuccess"]
+    ) [data-testid="stAlertContainer"] {
+        background-color: #d9f5e1 !important;
+        border: 1px solid #c5e8ce !important;
+    }
+
+    [data-testid="stAlertContentSuccess"] [data-testid="stMarkdownContainer"],
+    [data-testid="stAlertContentSuccess"] [data-testid="stMarkdownContainer"] * {
+        color: #203b35 !important;
+    }
+
+    [data-testid="stAlertContentSuccess"] [data-testid="stAlertDynamicIcon"] {
+        color: #55766b !important;
+    }
+
     .block-container .stSelectbox label,
     .block-container .stTextArea label,
     .block-container .stTextInput label {
