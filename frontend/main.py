@@ -490,6 +490,12 @@ st.html(
         color: #ffffff !important;
     }
 
+    [data-testid="stExpander"],
+    [data-testid="stExpander"] > details {
+        border: none !important;
+        box-shadow: none !important;
+    }
+
     .neumorphic-track {
         width: min(82%, 600px);
         height: 34px;
