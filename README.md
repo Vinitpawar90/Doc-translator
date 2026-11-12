@@ -33,6 +33,16 @@ uvicorn backend.api:app --reload
 
 The backend requires `DEEPL_API_KEY` in the root `.env` file. Neon CLI setup
 stores the linked project's database connection variables there as well.
+The frontend's feedback form posts ratings and optional comments to
+`http://localhost:8000/feedback` by default. Set `FEEDBACK_API_URL` in the
+frontend environment to the backend's reachable `/feedback` URL when they run
+on different hosts or in separate containers. Feedback is saved in the shared
+database.
+
+`POST /feedback` accepts a required `message` of up to 1,000 characters and an
+optional PNG or JPEG screenshot up to 5 MB. Messages are stored in
+`feedback_messages` and screenshots in `feedback_attachments`. Successful
+submissions return HTTP 201 with the saved feedback ID.
 
 ## Run the Streamlit frontend with Docker
 

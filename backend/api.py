@@ -5,6 +5,7 @@ import tempfile
 import requests
 
 from pathlib import Path
+from typing import Optional
 from dotenv import load_dotenv
 from sqlalchemy.orm import Session
 
@@ -16,11 +17,15 @@ from fastapi import (
     Depends,
     HTTPException
 )
-
 from fastapi.responses import Response
 #from fastapi import FastAPI
 from .database import engine, Base, get_db
-from .models import APIKey, TranslationHistory
+from .models import (
+    APIKey,
+    FeedbackAttachment,
+    FeedbackMessage,
+    TranslationHistory
+)
 from .auth import validate_api_key
 
 load_dotenv()
@@ -32,6 +37,7 @@ app = FastAPI(
     description="Document translation with usage monitoring",
     version="2.0.0"
 )
+
 
 DEEPL_API_KEY = os.getenv("DEEPL_API_KEY")
 
@@ -50,6 +56,53 @@ def home():
         "message": "Document Translation API is running",
         "version": "2.0.0"
     }
+
+
+@app.post("/feedback", status_code=201)
+def submit_feedback(
+    message: str = Form(..., min_length=1, max_length=1000),
+    screenshot: Optional[UploadFile] = File(None),
+    db: Session = Depends(get_db)
+):
+    message = message.strip()
+    if not message:
+        raise HTTPException(
+            status_code=422,
+            detail="Feedback message cannot be empty"
+        )
+
+    screenshot_data = None
+    if screenshot is not None:
+        screenshot_data = screenshot.file.read(5 * 1024 * 1024 + 1)
+        if len(screenshot_data) > 5 * 1024 * 1024:
+            raise HTTPException(
+                status_code=413,
+                detail="Screenshot must be 5 MB or smaller"
+            )
+
+        valid_signatures = {
+            "image/png": screenshot_data.startswith(b"\x89PNG\r\n\x1a\n"),
+            "image/jpeg": screenshot_data.startswith(b"\xff\xd8\xff")
+        }
+        if not valid_signatures.get(screenshot.content_type, False):
+            raise HTTPException(
+                status_code=415,
+                detail="Screenshot must be a PNG or JPEG image"
+            )
+
+    feedback = FeedbackMessage(message=message)
+    db.add(feedback)
+    db.flush()
+    if screenshot is not None:
+        db.add(
+            FeedbackAttachment(
+                feedback_id=feedback.id,
+                content_type=screenshot.content_type,
+                data=screenshot_data
+            )
+        )
+    db.commit()
+    return {"id": feedback.id, "status": "received"}
 
 
 @app.post("/translate")

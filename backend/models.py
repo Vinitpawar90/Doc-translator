@@ -121,3 +121,50 @@ class FrontendTranslationHistory(Base):
     mime_type = Column(String(100), nullable=True)
 
     created_at = Column(Float, nullable=False, index=True)
+
+
+class UserFeedback(Base):
+    __tablename__ = "user_feedback"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    rating = Column(Integer, nullable=False)
+
+    comment = Column(Text, nullable=True)
+
+    created_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        index=True
+    )
+
+
+class FeedbackMessage(Base):
+    __tablename__ = "feedback_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    message = Column(Text, nullable=False)
+
+    created_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        index=True
+    )
+
+
+class FeedbackAttachment(Base):
+    __tablename__ = "feedback_attachments"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    feedback_id = Column(
+        Integer,
+        ForeignKey("feedback_messages.id"),
+        nullable=False,
+        index=True
+    )
+
+    content_type = Column(String(100), nullable=False)
+
+    data = Column(LargeBinary, nullable=False)

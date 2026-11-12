@@ -18,6 +18,10 @@ DOCUMENT_OUTPUT_FORMAT = "pdf"
 DOCX_MIME_TYPE = (
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 )
+FEEDBACK_API_URL = os.getenv(
+    "FEEDBACK_API_URL",
+    "http://localhost:8000/feedback"
+).strip()
 
 st.set_page_config(
     page_title="DeepL Translator",
@@ -272,7 +276,7 @@ st.html(
     }
 
     html, body, .stApp {
-        background: var(--bg) !important;
+        background: #faf4ea !important;
         color: var(--text);
         font-family: "Georgia", "Times New Roman", serif;
     }
@@ -291,7 +295,7 @@ st.html(
         padding: 1rem !important;
         border: 1px solid var(--line);
         border-radius: 22px;
-        background: #ffffff !important;
+        background: #edf7f1 !important;
         box-shadow: 0 16px 42px var(--shadow);
     }
 
@@ -378,7 +382,7 @@ st.html(
         margin: 0;
         padding: 0.45rem 1rem 0.65rem;
         border-bottom: 1px solid #edf0ec;
-        background: lightblue;
+        background: #f3deba;
         font-family: "Segoe UI", sans-serif;
     }
 
@@ -838,6 +842,72 @@ st.html(
         color: var(--text);
     }
 
+    .st-key-translator_feedback_link button {
+        padding: 0.1rem 0.2rem;
+        border: 0;
+        border-radius: 0;
+        background: transparent !important;
+        box-shadow: none;
+        color: var(--muted);
+        font-style: italic;
+    }
+
+    .st-key-translator_feedback_link button:hover {
+        background: transparent;
+        color: var(--text);
+        text-decoration: underline;
+    }
+
+    [role="dialog"] {
+        background: #fffaf1 !important;
+        border: 1px solid #e6ddd0 !important;
+        border-radius: 16px !important;
+        box-shadow: 0 20px 56px rgba(32, 59, 53, 0.18) !important;
+        color: #203b35 !important;
+    }
+
+    [role="dialog"] h1,
+    [role="dialog"] h2,
+    [role="dialog"] h3,
+    [role="dialog"] p,
+    [role="dialog"] label {
+        color: #203b35;
+    }
+
+    [role="dialog"] textarea {
+        background: #ffffff !important;
+        border: 1px solid #d8d1c5 !important;
+        border-radius: 10px !important;
+        color: #203b35 !important;
+    }
+
+    [role="dialog"] textarea:focus {
+        border-color: #55766b !important;
+        box-shadow: 0 0 0 1px #55766b !important;
+    }
+
+    [role="dialog"] [data-testid="stFileUploaderDropzone"] {
+        background: #fffdf9 !important;
+        border: 1px dashed #d9cdbb !important;
+        border-radius: 12px !important;
+    }
+
+    [role="dialog"] [data-testid="stBaseButton-secondaryFormSubmit"] {
+        background: #55766b !important;
+        border: 1px solid #55766b !important;
+        border-radius: 9px !important;
+        color: #ffffff !important;
+    }
+
+    [role="dialog"] [data-testid="stBaseButton-secondaryFormSubmit"] p {
+        color: #ffffff !important;
+    }
+
+    [role="dialog"] [data-testid="stBaseButton-secondaryFormSubmit"]:hover {
+        background: #45655b !important;
+        border-color: #45655b !important;
+    }
+
     </style>
     """
 )
@@ -877,6 +947,77 @@ def get_secret_api_key():
         return str(st.secrets.get("DEEPL_API_KEY", "")).strip()
     except (FileNotFoundError, AttributeError):
         return ""
+
+
+@st.dialog("Send feedback")
+def feedback_dialog():
+    st.markdown("Describe your feedback (required)")
+    with st.form("translator_feedback_form"):
+        message = st.text_area(
+            "Describe your feedback",
+            placeholder="Tell us what prompted this feedback...",
+            max_chars=1000,
+            label_visibility="collapsed",
+            key="translator_feedback_message"
+        )
+        st.caption(
+            "Please don't include any sensitive information "
+            ":material/help_outline:"
+        )
+        st.markdown(
+            "A screenshot will help us better understand your feedback."
+        )
+        screenshot = st.file_uploader(
+            "Capture screenshot",
+            type=["png", "jpg", "jpeg"],
+            max_upload_size=5,
+            label_visibility="collapsed",
+            key="translator_feedback_screenshot"
+        )
+        with st.container(horizontal_alignment="right"):
+            submitted = st.form_submit_button(
+                "Send feedback",
+                type="secondary"
+            )
+
+    if submitted:
+        if not message.strip():
+            st.warning("Enter feedback before sending.")
+            return
+
+        try:
+            request_data = {"message": message}
+            request_files = None
+            if screenshot is not None:
+                request_files = {
+                    "screenshot": (
+                        screenshot.name,
+                        screenshot.getvalue(),
+                        screenshot.type
+                    )
+                }
+            response = requests.post(
+                FEEDBACK_API_URL,
+                data=request_data,
+                files=request_files,
+                timeout=8
+            )
+            response.raise_for_status()
+        except requests.RequestException as error:
+            st.error(f"Could not send feedback: {error}")
+        else:
+            st.toast("Feedback sent.")
+            st.rerun()
+
+
+def render_feedback_footer():
+    with st.container(horizontal_alignment="center"):
+        if st.button(
+            "Send feedback",
+            key="translator_feedback_link",
+            type="tertiary"
+        ):
+            feedback_dialog()
 
 
 def load_sample_phrase():
@@ -1168,6 +1309,7 @@ if not api_key:
         "Set `DEEPL_API_KEY` in your `.env` file or Streamlit secrets to "
         "start translating."
     )
+    render_feedback_footer()
     st.stop()
 
 api_base = get_api_base(api_key)
@@ -1175,6 +1317,7 @@ try:
     target_languages = get_languages(api_base, api_key, "translate_text")
 except (requests.RequestException, RuntimeError, ValueError) as error:
     st.error(f"Could not load supported languages from DeepL: {error}")
+    render_feedback_footer()
     st.stop()
 
 targets = {
@@ -1196,6 +1339,7 @@ if not target_options:
         "This DeepL API key did not return any supported target languages. "
         "Check the key or DeepL account availability."
     )
+    render_feedback_footer()
     st.stop()
 
 def swap_languages():
@@ -1387,3 +1531,5 @@ with upload_tab:
             target_name,
             source_code
         )
+
+render_feedback_footer()
