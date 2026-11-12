@@ -5,10 +5,13 @@
 - `frontend/` contains the Streamlit translation UI and admin dashboard.
 - `backend/` contains the FastAPI service, database models, and API-key helpers.
 - `outputs/` stores translated documents.
-- `.env` and `translation.db` remain in the project root.
+- `.env` stores local secrets and connection strings. `translation.db` is the
+  local SQLite fallback.
 
 Run commands from the project root so `.env`, the database, and `outputs/`
-resolve to their existing locations.
+resolve to their existing locations. The app reads `DATABASE_URL` from `.env`
+for Neon/PostgreSQL and falls back to local SQLite when it is not configured.
+Keep `.env` private; it contains database credentials.
 
 ## Run the frontend
 
@@ -28,7 +31,8 @@ streamlit run frontend\admin_dashboard.py
 uvicorn backend.api:app --reload
 ```
 
-The backend requires `DEEPL_API_KEY` in the root `.env` file.
+The backend requires `DEEPL_API_KEY` in the root `.env` file. Neon CLI setup
+stores the linked project's database connection variables there as well.
 
 ## Run the Streamlit frontend with Docker
 
@@ -38,7 +42,8 @@ Build the image from the project root:
 docker build -t translation-app .
 ```
 
-Run it with your root `.env` file (which must define `DEEPL_API_KEY`):
+Run it with your root `.env` file (which must define `DEEPL_API_KEY` and the
+Neon `DATABASE_URL` when using PostgreSQL):
 
 ```powershell
 docker run --rm -p 8501:8501 --env-file .env translation-app

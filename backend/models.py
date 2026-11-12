@@ -7,7 +7,9 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
-    Float
+    Float,
+    LargeBinary,
+    Text
 )
 
 from sqlalchemy.sql import func
@@ -87,3 +89,35 @@ class DeepLUsageSnapshot(Base):
         DateTime(timezone=True),
         server_default=func.now()
     )
+
+
+class FrontendTranslationHistory(Base):
+    __tablename__ = "frontend_translation_history"
+
+    id = Column(String(32), primary_key=True)
+
+    browser_id = Column(String(32), nullable=False, index=True)
+
+    kind = Column(String(20), nullable=False)
+
+    title = Column(String(255), nullable=False)
+
+    source_language = Column(String(32), nullable=False)
+
+    source_language_name = Column(String(100), nullable=False)
+
+    target_language = Column(String(32), nullable=False)
+
+    target_language_name = Column(String(100), nullable=False)
+
+    source_text = Column(Text, nullable=True)
+
+    translated_text = Column(Text, nullable=True)
+
+    translated_data = Column(LargeBinary, nullable=True)
+
+    download_name = Column(String(255), nullable=False)
+
+    mime_type = Column(String(100), nullable=True)
+
+    created_at = Column(Float, nullable=False, index=True)

@@ -6,7 +6,7 @@ PyMuPDF
 numpy
 opencv-python-headless
 Pillow
-streamlit>=1.30.0
+streamlit>=1.51.0
 requests>=2.31.0
 python-docx
 
@@ -16,6 +16,7 @@ fastapi
 uvicorn
 python-multipart
 sqlalchemy
+psycopg2-binary
 requests
 python-dotenv
 
