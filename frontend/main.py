@@ -1,10 +1,23 @@
+import base64
 import hashlib
+import html
+import logging
 import os
+import sqlite3
 import time
+from datetime import datetime
+from pathlib import Path
 
 import requests
 import streamlit as st
 from dotenv import load_dotenv
+
+if __package__:
+    from . import data_shield, document_shield, sidebar_store
+else:
+    import data_shield
+    import document_shield
+    import sidebar_store
 
 
 load_dotenv()
@@ -22,12 +35,31 @@ FEEDBACK_API_URL = os.getenv(
     "FEEDBACK_API_URL",
     "http://localhost:8000/feedback"
 ).strip()
+BACKEND_API_URL = os.getenv(
+    "BACKEND_API_URL",
+    FEEDBACK_API_URL.rsplit("/", 1)[0]
+).rstrip("/")
+LOGO_DATA = base64.b64encode(
+    (Path(__file__).resolve().parents[1] / "pictures" / "bl logo.webp").read_bytes()
+).decode("ascii")
+LOGGER = logging.getLogger(__name__)
 
 st.set_page_config(
     page_title="DeepL Translator",
     page_icon=":material/translate:",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded",
 )
+
+@st.cache_resource(show_spinner=False)
+def initialize_sidebar_database():
+    sidebar_store.initialize_database()
+
+
+initialize_sidebar_database()
+st.session_state.setdefault("data_shield_enabled", True)
+st.session_state.setdefault("deepl_file_uploader_generation", 0)
+st.session_state.setdefault("sidebar_history_collapsed", False)
 
 _COPY_BUTTON_HTML = """
 <div class="copy-wrap">
@@ -254,9 +286,10 @@ _COPY_BUTTON = st.components.v2.component(
     js=_COPY_BUTTON_JS
 )
 
-st.html(
-    """
-    <style>
+_APP_CSS = """
+<style>
+    @import url("https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600&display=swap");
+
     :root {
         --bg: #f1f3ef;
         --panel: #ffffff;
@@ -276,7 +309,7 @@ st.html(
     }
 
     html, body, .stApp {
-        background: #faf4ea !important;
+        background: #ffffff !important;
         color: var(--text);
         font-family: "Georgia", "Times New Roman", serif;
     }
@@ -372,7 +405,7 @@ st.html(
         flex-wrap: wrap;
         align-items: center;
         justify-content: space-between;
-        min-height: 54px;
+        min-height: 68px;
         box-sizing: border-box;
         position: fixed;
         top: 0;
@@ -380,26 +413,23 @@ st.html(
         right: 0;
         z-index: 1000001;
         margin: 0;
-        padding: 0.45rem 1rem 0.65rem;
+        padding: 0.25rem 1rem;
         border-bottom: 1px solid #edf0ec;
-        background: #f3deba;
+        background: #f0f2f1;
         font-family: "Segoe UI", sans-serif;
     }
 
     .translator-logo {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        min-width: 90px;
-        min-height: 32px;
-        padding: 0.3rem 0.65rem;
-        border: 1px solid #000000;
-        border-radius: 6px;
-        background: #000000;
-        color: #ffffff;
-        font-size: 0.64rem;
-        font-weight: 700;
-        letter-spacing: 0.1em;
+        width: 96px;
+        height: 60px;
+        overflow: hidden;
+    }
+
+    .translator-logo img {
+        display: block;
+        width: 96px;
+        height: 96px;
+        transform: translateY(-17px);
     }
 
     .translator-profile {
@@ -680,10 +710,26 @@ st.html(
 
     [data-testid="stFileUploaderDropzoneInstructions"] {
         order: 3;
-        justify-content: center;
+        display: block !important;
+        width: 100%;
+        min-width: 0;
+        max-width: 100%;
+        box-sizing: border-box;
         text-align: center;
         color: var(--muted);
         font-size: 0.75rem;
+        line-height: 1.4;
+        white-space: normal;
+        overflow-wrap: anywhere;
+    }
+
+    [data-testid="stFileUploaderDropzoneInstructions"] > div {
+        display: block !important;
+        width: 100%;
+        min-width: 0;
+        max-width: 100%;
+        white-space: normal;
+        overflow-wrap: anywhere;
     }
 
     [data-testid="stFileUploader"] [data-testid="stBaseButton-secondary"] {
@@ -908,17 +954,412 @@ st.html(
         border-color: #45655b !important;
     }
 
+    [data-testid="stSidebar"] {
+        background: #F4F8F6 !important;
+        border-right: 1px solid #DCE8E2 !important;
+        color: #17352D !important;
+    }
+
+    [data-testid="stSidebar"][aria-expanded="true"] {
+        flex: 0 0 312px !important;
+        width: 312px !important;
+        min-width: 312px !important;
+    }
+
+    /* Spacer that keeps sidebar content below the fixed site header (68px). */
+    [data-testid="stSidebarHeader"] {
+        position: static;
+        height: 80px;
+        min-height: 80px;
+        padding: 0 !important;
+        background: #F4F8F6;
+    }
+
+    /* Collapse button sits on the same row as "+ New translation". */
+    [data-testid="stSidebarCollapseButton"] {
+        display: block !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+    }
+
+    [data-testid="stSidebarCollapseButton"] button,
+    [data-testid="stExpandSidebarButton"] {
+        position: fixed !important;
+        top: 96px !important;
+        width: 38px !important;
+        height: 38px !important;
+        min-height: 38px !important;
+        padding: 0 !important;
+        display: flex !important;
+        align-items: center;
+        justify-content: center;
+        background: #DCE8E2 !important;
+        border: 1px solid #AFC7BD !important;
+        border-radius: 10px !important;
+        color: #17352D !important;
+    }
+
+    [data-testid="stSidebarCollapseButton"] button {
+        left: 243px !important;
+    }
+
+    [data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarCollapseButton"] {
+        display: none !important;
+    }
+
+    [data-testid="stExpandSidebarButton"] {
+        left: 16px !important;
+        z-index: 1000002 !important;
+    }
+
+    [data-testid="stSidebarCollapseButton"] [data-testid="stIconMaterial"] {
+        color: #17352D !important;
+        font-size: 1.3rem;
+    }
+
+    [data-testid="stSidebarCollapseButton"] button:hover {
+        background: #2F6B5A !important;
+        color: #FFFFFF !important;
+    }
+
+    [data-testid="stSidebarCollapseButton"] button:hover [data-testid="stIconMaterial"] {
+        color: #FFFFFF !important;
+    }
+
+    [data-testid="stSidebar"] .st-key-sidebar_new_translation {
+        width: calc(100% - 46px) !important;
+    }
+
+    [data-testid="stExpandSidebarButton"] [data-testid="stIconMaterial"] {
+        color: #17352D !important;
+        font-size: 1.3rem;
+    }
+
+    [data-testid="stExpandSidebarButton"]:hover {
+        background: #2F6B5A !important;
+        color: #FFFFFF !important;
+    }
+
+    [data-testid="stExpandSidebarButton"]:hover [data-testid="stIconMaterial"] {
+        color: #FFFFFF !important;
+    }
+
+
+    [data-testid="stSidebar"] > div,
+    [data-testid="stSidebar"] [data-testid="stSidebarContent"] {
+        background: #F4F8F6 !important;
+    }
+
+    [data-testid="stSidebar"] [data-testid="stSidebarContent"] {
+        height: 100vh;
+        overflow-y: auto;
+        scrollbar-width: thin;
+    }
+
+    [data-testid="stSidebar"] [data-testid="stSidebarUserContent"] {
+        padding-bottom: 0.75rem !important;
+    }
+
+    [data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
+        gap: 0.5rem !important;
+    }
+
+    /* Streamlit pulls HTML markdown blocks up with a -1rem bottom margin,
+       which makes labels overlap the next element in the sidebar. */
+    [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] {
+        margin-bottom: 0 !important;
+    }
+
+    /* Cards keep their natural height instead of being squeezed. */
+    [data-testid="stSidebar"] [data-testid="stLayoutWrapper"],
+    [data-testid="stSidebar"] [data-testid="stElementContainer"] {
+        flex-shrink: 0 !important;
+    }
+
+    /* Compact history list: at most ~260px tall, shrinking on short
+       windows so the whole sidebar still fits without page scrolling. */
+    [data-testid="stSidebar"] [data-testid="stLayoutWrapper"]:has(> .st-key-sidebar_history_list),
+    [data-testid="stSidebar"] .st-key-sidebar_history_list {
+        flex: 0 0 auto !important;
+        height: min(260px, max(150px, calc(100vh - 515px))) !important;
+        min-height: 150px !important;
+        max-height: none !important;
+    }
+
+    [data-testid="stSidebar"] [data-testid="stMarkdownContainer"],
+    [data-testid="stSidebar"] [data-testid="stWidgetLabel"] {
+        color: #17352D;
+        font-family: "Inter", sans-serif;
+    }
+
+    [data-testid="stSidebar"] h1,
+    [data-testid="stSidebar"] h2,
+    [data-testid="stSidebar"] h3 {
+        color: #17352D;
+        font-family: "Fraunces", Georgia, serif;
+    }
+
+    [data-testid="stSidebar"] .sidebar-brand {
+        color: #17352D;
+        font-family: "Fraunces", Georgia, serif;
+        font-size: 1.65rem;
+        font-weight: 600;
+        line-height: 1.2;
+        margin: 0.1rem 0 0.55rem;
+    }
+
+    [data-testid="stSidebar"] .sidebar-section-label {
+        color: #50645D;
+        font-family: "Inter", sans-serif;
+        font-size: 0.7rem;
+        font-weight: 600;
+        letter-spacing: 0.12em;
+        line-height: 1.2;
+        margin: 0 0 0.3rem;
+        text-transform: uppercase;
+    }
+
+    [data-testid="stSidebar"] .sidebar-muted {
+        color: #50645D;
+        font-family: "Inter", sans-serif;
+        font-size: 0.82rem;
+        line-height: 1.45;
+    }
+
+    [data-testid="stSidebar"] .sidebar-history-group {
+        color: #50645D;
+        font-family: "Inter", sans-serif;
+        font-size: 0.68rem;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        margin: 0.15rem 0 0.1rem 0.4rem;
+    }
+
+    [data-testid="stSidebar"] .st-key-sidebar_history_header {
+        gap: 0.25rem !important;
+        min-height: 24px;
+    }
+
+    [data-testid="stSidebar"] .st-key-sidebar_history_header .sidebar-section-label {
+        margin: 0;
+    }
+
+    [data-testid="stSidebar"] .st-key-sidebar_history_toggle button {
+        min-height: 24px !important;
+        width: 26px;
+        height: 24px;
+        padding: 0 !important;
+        border-radius: 6px !important;
+        color: #50645D !important;
+    }
+
+    [data-testid="stSidebar"] .st-key-sidebar_history_toggle button:hover {
+        background: #EEF4F1 !important;
+        color: #17352D !important;
+    }
+
+    [data-testid="stSidebar"] .st-key-sidebar_history_toggle [data-testid="stIconMaterial"] {
+        font-size: 1.2rem;
+    }
+
+    [data-testid="stSidebar"] .st-key-sidebar_history_search input {
+        background: #FFFFFF !important;
+        color: #17352D !important;
+        -webkit-text-fill-color: #17352D !important;
+        border-radius: 9px !important;
+    }
+
+    [data-testid="stSidebar"] .st-key-sidebar_history_search input::placeholder {
+        color: #7A8C85 !important;
+        -webkit-text-fill-color: #7A8C85 !important;
+    }
+
+    [data-testid="stSidebar"] .st-key-sidebar_history_list {
+        padding-right: 0.25rem;
+        scrollbar-width: thin;
+        scrollbar-color: #AFC7BD transparent;
+    }
+
+    [data-testid="stSidebar"] .st-key-sidebar_history_list,
+    [data-testid="stSidebar"] .st-key-sidebar_history_list [data-testid="stVerticalBlock"] {
+        gap: 0 !important;
+    }
+
+    [data-testid="stSidebar"] .st-key-sidebar_history_list button {
+        justify-content: flex-start !important;
+        min-height: 24px !important;
+        padding: 0.1rem 0.4rem !important;
+        background: transparent !important;
+        border: 1px solid transparent !important;
+        border-radius: 6px !important;
+        box-shadow: none !important;
+        transform: none !important;
+    }
+
+    [data-testid="stSidebar"] .st-key-sidebar_history_list button:hover {
+        background: #EEF4F1 !important;
+        border-color: #DCE8E2 !important;
+    }
+
+    [data-testid="stSidebar"] .st-key-sidebar_history_list button > div,
+    [data-testid="stSidebar"] .st-key-sidebar_history_list button span,
+    [data-testid="stSidebar"] .st-key-sidebar_history_list button [data-testid="stMarkdownContainer"] {
+        display: block !important;
+        width: 100% !important;
+        min-width: 0;
+        text-align: left !important;
+    }
+
+    [data-testid="stSidebar"] .st-key-sidebar_history_list button p {
+        color: #17352D !important;
+        font-size: 0.78rem !important;
+        font-weight: 500 !important;
+        line-height: 1.3 !important;
+        text-align: left !important;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    [data-testid="stSidebar"] .sidebar-history-meta {
+        color: #6B7F78;
+        font-family: "Inter", sans-serif;
+        font-size: 0.66rem;
+        line-height: 1.2;
+        margin: 0 0 0.3rem 0.4rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    [data-testid="stSidebar"] .sidebar-history-done {
+        color: #2F6B5A;
+        font-weight: 600;
+    }
+
+    [data-testid="stSidebar"] .sidebar-history-failed {
+        color: #B42318;
+        font-weight: 600;
+    }
+
+    [data-testid="stSidebar"] .sidebar-shield-status {
+        color: #50645D;
+        font-family: "Inter", sans-serif;
+        font-size: 0.82rem;
+        font-weight: 600;
+        text-align: right;
+    }
+
+    [data-testid="stSidebar"] .sidebar-muted {
+        font-size: 0.75rem !important;
+        line-height: 1.35 !important;
+    }
+
+    [data-testid="stSidebar"] [data-testid="stCheckbox"] label[data-selected="true"] > div:first-of-type {
+        background: #2F6B5A !important;
+    }
+
+    [data-testid="stSidebar"] [data-testid="stProgressBarTrack"] {
+        background: #E4EEE9 !important;
+    }
+
+    [data-testid="stSidebar"] [data-testid="stProgressBarTrack"] > div {
+        background: #2F6B5A !important;
+    }
+
+    [data-testid="stSidebar"] .st-key-sidebar_history_card,
+    [data-testid="stSidebar"] .st-key-sidebar_data_shield_card,
+    [data-testid="stSidebar"] .st-key-sidebar_usage {
+        background: #FFFFFF;
+        border: 1px solid #CFDDD6 !important;
+        border-radius: 13px;
+        padding: 0.6rem 0.7rem !important;
+        gap: 0.35rem !important;
+    }
+
+    [data-testid="stSidebar"] .st-key-sidebar_usage [data-testid="stProgress"] {
+        margin: 0.15rem 0;
+    }
+
+    /* Pin the usage card to the bottom of the sidebar. The sidebar column
+       is stretched to full height so margin-top:auto pushes the card down
+       when content is short; sticky keeps it visible when history is long. */
+    [data-testid="stSidebar"] [data-testid="stSidebarContent"] {
+        display: flex;
+        flex-direction: column;
+    }
+
+    [data-testid="stSidebar"] [data-testid="stSidebarUserContent"],
+    [data-testid="stSidebar"] [data-testid="stSidebarUserContent"] > div {
+        flex: 1 0 auto;
+        display: flex;
+        flex-direction: column;
+    }
+
+    [data-testid="stSidebar"] [data-testid="stSidebarUserContent"] > div > [data-testid="stVerticalBlock"] {
+        flex: 1 0 auto;
+    }
+
+    [data-testid="stSidebar"] [data-testid="stVerticalBlock"] > :has(.st-key-sidebar_usage),
+    [data-testid="stSidebar"] [data-testid="stVerticalBlock"] > .st-key-sidebar_usage {
+        margin-top: auto;
+        position: sticky;
+        bottom: 0.75rem;
+        z-index: 2;
+        box-shadow: 0 -6px 12px -8px rgba(23, 53, 45, 0.18);
+        border-radius: 13px;
+    }
+
+    [data-testid="stSidebar"] button {
+        font-family: "Inter", sans-serif;
+        min-height: 38px;
+    }
+
+    [data-testid="stSidebar"] .st-key-sidebar_history_search input {
+        min-height: 36px;
+        padding: 0.35rem 0.7rem !important;
+        font-size: 0.85rem;
+    }
+
+    [data-testid="stSidebar"] button[kind="primary"] {
+        background: #2F6B5A !important;
+        border-color: #2F6B5A !important;
+        color: #FFFFFF !important;
+    }
+
+    [data-testid="stSidebar"] button[data-testid="stBaseButton-primary"] p {
+        color: #FFFFFF !important;
+    }
+
+    [data-testid="stSidebar"] button:focus-visible,
+    [data-testid="stSidebar"] input:focus-visible,
+    [data-testid="stSidebar"] textarea:focus-visible,
+    [data-testid="stSidebar"] [role="switch"]:focus-visible {
+        outline: 3px solid #2F6B5A !important;
+        outline-offset: 2px !important;
+    }
+
+    @media (max-width: 720px) {
+        [data-testid="stSidebar"][aria-expanded="true"] {
+            width: min(312px, 86vw) !important;
+            min-width: min(312px, 86vw) !important;
+            flex-basis: min(312px, 86vw) !important;
+        }
+    }
+
     </style>
-    """
-)
+"""
+st.markdown(_APP_CSS, unsafe_allow_html=True)
 st.markdown(
-    """
+    f"""
     <header class="translator-site-header">
-        <div class="translator-logo">YOUR LOGO</div>
+        <div class="translator-logo">
+            <img src="data:image/webp;base64,{LOGO_DATA}" alt="Bajaj Life">
+        </div>
         <details class="translator-profile">
             <summary>
                 <span class="translator-profile-avatar" aria-hidden="true"></span>
-                <span>Your name</span>
+                <span></span>
                 <span class="translator-profile-chevron">⌄</span>
             </summary>
             <div class="translator-profile-menu">Translation workspace</div>
@@ -1020,6 +1461,130 @@ def render_feedback_footer():
             feedback_dialog()
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def _parse_usage(payload: object) -> dict[str, int]:
+    if not isinstance(payload, dict):
+        raise ValueError("The usage endpoint returned an unexpected response.")
+
+    character_count = payload.get("character_count")
+    character_limit = payload.get("character_limit")
+    if type(character_count) is not int or type(character_limit) is not int:
+        raise ValueError("The usage endpoint returned invalid character counts.")
+    return {
+        "character_count": character_count,
+        "character_limit": character_limit
+    }
+
+
+def get_backend_usage(api_base: str) -> dict[str, int]:
+    response = requests.get(f"{api_base}/usage", timeout=5)
+    response.raise_for_status()
+    return _parse_usage(response.json())
+
+
+def get_deepl_usage(api_base: str, api_key: str) -> dict[str, int]:
+    # TEMPORARY: asks DeepL directly when the backend /usage route is down.
+    # Remove once the backend is always available.
+    response = requests.get(
+        f"{api_base}/v2/usage",
+        headers={"Authorization": f"DeepL-Auth-Key {api_key}"},
+        timeout=5,
+    )
+    raise_for_deepl_error(response)
+    return _parse_usage(response.json())
+
+
+def load_usage() -> dict[str, int] | None:
+    try:
+        return get_backend_usage(BACKEND_API_URL)
+    except (requests.RequestException, ValueError) as error:
+        LOGGER.warning("Backend usage is unavailable: %s", error)
+    try:
+        return get_deepl_usage(api_base, api_key)
+    except (requests.RequestException, RuntimeError, ValueError) as error:
+        LOGGER.warning("DeepL usage is unavailable: %s", error)
+    return None
+
+
+def format_usage_count(count: int) -> str:
+    if count >= 1_000_000:
+        return f"{count / 1_000_000:.1f}M".replace(".0M", "M")
+    if count >= 1_000:
+        return f"{count / 1_000:.0f}K"
+    return f"{count:,}"
+
+
+def record_translation(**details) -> None:
+    try:
+        sidebar_store.add_translation(
+            user=sidebar_store.DEFAULT_USER,
+            **details
+        )
+    except (OSError, sqlite3.Error):
+        LOGGER.exception("Could not save translation history.")
+        st.warning("The translation completed, but could not be saved to history.")
+
+
+def start_new_translation() -> None:
+    st.session_state["deepl_file_uploader_generation"] += 1
+    st.session_state["deepl_source_text"] = ""
+    st.session_state["deepl_text_result_display"] = ""
+    for key in (
+        "deepl_text_result",
+        "deepl_document_file_result",
+        "sidebar_opened_history_id",
+    ):
+        st.session_state.pop(key, None)
+    st.session_state["deepl_translation_tabs"] = "↑  Upload document"
+
+
+def toggle_history_collapsed() -> None:
+    st.session_state["sidebar_history_collapsed"] = (
+        not st.session_state["sidebar_history_collapsed"]
+    )
+
+
+def reopen_history_translation(
+    translation_id: str,
+    source_options: dict[str, str],
+    target_options: dict[str, str],
+) -> None:
+    row = sidebar_store.get_translation(sidebar_store.DEFAULT_USER, translation_id)
+    if row is None:
+        st.session_state.pop("sidebar_opened_history_id", None)
+        return
+
+    st.session_state["sidebar_opened_history_id"] = translation_id
+    st.session_state["deepl_file_uploader_generation"] += 1
+    st.session_state.pop("deepl_document_file_result", None)
+    st.session_state["deepl_translation_tabs"] = (
+        "≡  Paste text" if row["kind"] == "text" else "↑  Upload document"
+    )
+    source_name = str(row["source_language"])
+    target_name = str(row["target_language"])
+    if source_name in source_options or source_name == "Detect automatically":
+        st.session_state["deepl_source_language"] = source_name
+    if target_name in target_options:
+        st.session_state["deepl_target_language"] = target_name
+
+    if row["kind"] == "text":
+        source_text = str(row.get("source_text") or "")
+        st.session_state["deepl_source_text"] = source_text
+        if row["status"] == "Done" and row.get("result_text"):
+            source_code = source_options.get(source_name, "AUTO")
+            target_code = target_options.get(target_name)
+            if target_code:
+                st.session_state["deepl_text_result"] = {
+                    "text": row["result_text"],
+                    "signature": (source_text, target_code, source_code)
+                }
+        else:
+            st.session_state.pop("deepl_text_result", None)
+    else:
+        st.session_state.pop("deepl_text_result", None)
+        st.session_state["deepl_source_text"] = ""
+
+
 def load_sample_phrase():
     selected = st.session_state.get("deepl_sample_phrase")
     if selected:
@@ -1068,7 +1633,14 @@ def get_languages(api_base, api_key, resource):
     return payload
 
 
-def translate_text(api_base, api_key, text, target_lang, source_lang):
+def translate_text(
+    api_base,
+    api_key,
+    text,
+    target_lang,
+    source_lang,
+    protect_placeholders=False,
+):
     if len(text.encode("utf-8")) > 128 * 1024:
         raise ValueError(
             "Text is over the 128 KiB per-request limit. Split it into "
@@ -1080,6 +1652,12 @@ def translate_text(api_base, api_key, text, target_lang, source_lang):
     }
     if source_lang != "AUTO":
         data["source_lang"] = source_lang
+    if protect_placeholders:
+        # Data shield placeholders are <x i="N"/> tags. XML tag handling makes
+        # DeepL keep them intact; ignore_tags stops it touching them at all.
+        data["tag_handling"] = "xml"
+        data["ignore_tags"] = [data_shield.PLACEHOLDER_TAG]
+        data["split_sentences"] = "1"
 
     response = requests.post(
         f"{api_base}/v2/translate",
@@ -1219,6 +1797,28 @@ def translate_document(
     return result_response.content
 
 
+def get_masked_document(file_name, file_content, content_hash):
+    """Mask an upload once per file and keep the result for later reruns.
+
+    Returns (masked_document, None) or (None, reason the file is refused).
+    """
+    cache = st.session_state.setdefault("document_shield_cache", {})
+    key = (file_name, content_hash)
+    if key not in cache:
+        try:
+            cache.clear()
+            cache[key] = (
+                document_shield.mask_document(file_name, file_content),
+                None,
+            )
+        except (
+            document_shield.DocumentShieldUnsupported,
+            data_shield.DataShieldError,
+        ) as error:
+            cache[key] = (None, str(error))
+    return cache[key]
+
+
 def render_file_translation(
     uploaded_file,
     file_kind,
@@ -1227,19 +1827,23 @@ def render_file_translation(
     api_key,
     target_code,
     target_name,
-    source_code
+    source_code,
+    source_name,
 ):
     if uploaded_file is None:
         st.session_state.pop(state_key, None)
         return
 
     file_content = uploaded_file.getvalue()
+    content_hash = hashlib.sha256(file_content).hexdigest()
+    shield_enabled = st.session_state["data_shield_enabled"]
     signature = (
         uploaded_file.name,
-        hashlib.sha256(file_content).hexdigest(),
+        content_hash,
         target_code,
         source_code,
-        DOCUMENT_OUTPUT_FORMAT
+        DOCUMENT_OUTPUT_FORMAT,
+        shield_enabled,
     )
     saved_result = st.session_state.get(state_key)
     if saved_result and saved_result["signature"] != signature:
@@ -1250,12 +1854,42 @@ def render_file_translation(
         f"Selected: **{uploaded_file.name}** · "
         f"{uploaded_file.size / (1024 * 1024):.2f} MB"
     )
+
+    masked_document = None
+    if shield_enabled:
+        masked_document, refusal = get_masked_document(
+            uploaded_file.name,
+            file_content,
+            content_hash,
+        )
+        if refusal:
+            st.warning(
+                f":material/shield: {refusal} To send this file to DeepL "
+                "unmasked, turn off Data shield in the sidebar."
+            )
+        elif masked_document.shield.is_masked:
+            st.caption(
+                ":material/shield: Data shield will hide "
+                f"{data_shield.summary(masked_document.shield)} "
+                "from DeepL."
+            )
+        else:
+            st.caption(
+                ":material/shield: Data shield found no personal details "
+                "in this file."
+            )
+        if masked_document is not None:
+            for warning in masked_document.warnings:
+                st.caption(f":material/warning: {warning}")
+
     if st.button(
         f"Translate {file_kind}",
         type="primary",
         icon=":material/translate:",
+        disabled=shield_enabled and masked_document is None,
         key=f"{state_key}_translate"
     ):
+        st.session_state.pop("sidebar_opened_history_id", None)
         try:
             with st.spinner(
                 f"Translating {file_kind.lower()} into {target_name}..."
@@ -1264,12 +1898,21 @@ def render_file_translation(
                     api_base,
                     api_key,
                     uploaded_file.name,
-                    file_content,
+                    (
+                        masked_document.content
+                        if masked_document is not None
+                        else file_content
+                    ),
                     uploaded_file.type,
                     target_code,
                     source_code,
                     output_format=DOCUMENT_OUTPUT_FORMAT
                 )
+                if masked_document is not None:
+                    translated_file = document_shield.restore_document(
+                        translated_file,
+                        masked_document.shield,
+                    )
             translated_name = (
                 f"{os.path.splitext(uploaded_file.name)[0]}_"
                 f"{target_code.lower()}.{DOCUMENT_OUTPUT_FORMAT}"
@@ -1280,13 +1923,31 @@ def render_file_translation(
                 "file_name": translated_name,
                 "mime_type": DOCX_MIME_TYPE
             }
+            record_translation(
+                file_name=uploaded_file.name,
+                source_language=source_name,
+                target_language=target_name,
+                status="Done",
+                kind="document",
+                result_data=translated_file,
+                result_file_name=translated_name,
+            )
         except (
             requests.RequestException,
             RuntimeError,
             TimeoutError,
-            ValueError
+            ValueError,
+            data_shield.DataShieldError,
         ) as error:
             st.error(f"{file_kind} translation failed: {error}")
+            record_translation(
+                file_name=uploaded_file.name,
+                source_language=source_name,
+                target_language=target_name,
+                status="Failed",
+                kind="document",
+                error_message=str(error),
+            )
 
     saved_result = st.session_state.get(state_key)
     if saved_result and saved_result["signature"] == signature:
@@ -1341,6 +2002,166 @@ if not target_options:
     )
     render_feedback_footer()
     st.stop()
+
+
+def _sidebar_label(text: str) -> None:
+    st.markdown(
+        f'<div class="sidebar-section-label">{text}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _history_group_name(created_at: datetime, today) -> str:
+    if created_at.date() == today:
+        return "Today"
+    if (today - created_at.date()).days == 1:
+        return "Yesterday"
+    return created_at.strftime("%B %d, %Y")
+
+
+def _render_history_list(
+    source_language_options: dict[str, str],
+    target_language_options: dict[str, str],
+) -> None:
+    search = st.text_input(
+        "Search history",
+        placeholder="Search file or language",
+        label_visibility="collapsed",
+        key="sidebar_history_search",
+    )
+    rows = sidebar_store.list_translations(
+        sidebar_store.DEFAULT_USER,
+        search=search,
+        limit=100,
+    )
+    history_list = st.container(
+        height=300,
+        border=False,
+        key="sidebar_history_list",
+    )
+    if not rows:
+        history_list.caption("No translations found.")
+
+    today = datetime.now().astimezone().date()
+    current_group = None
+    for row in rows:
+        created_at = datetime.fromisoformat(str(row["created_at"]))
+        group = _history_group_name(created_at, today)
+        if group != current_group:
+            current_group = group
+            history_list.markdown(
+                f'<div class="sidebar-history-group">{group}</div>',
+                unsafe_allow_html=True,
+            )
+
+        source_text = str(row.get("source_text") or "")
+        title = str(row["file_name"])
+        if row["kind"] == "text" and source_text:
+            title = "Pasted text · " + " ".join(source_text.split()[:6])
+        if len(title) > 34:
+            title = f"{title[:32]}…"
+
+        if history_list.button(
+            title,
+            key=f"sidebar_history_{row['id']}",
+            width="stretch",
+        ):
+            reopen_history_translation(
+                str(row["id"]),
+                source_language_options,
+                target_language_options,
+            )
+            st.rerun()
+
+        status = str(row["status"])
+        status_class = "failed" if status == "Failed" else "done"
+        display_time = created_at.strftime("%I:%M %p").lstrip("0")
+        history_list.markdown(
+            '<div class="sidebar-history-meta">'
+            f'{html.escape(str(row["source_language"]))} → '
+            f'{html.escape(str(row["target_language"]))}'
+            f' · {display_time} · '
+            f'<span class="sidebar-history-{status_class}">'
+            f'{html.escape(status)}</span></div>',
+            unsafe_allow_html=True,
+        )
+
+
+def render_sidebar(
+    source_language_options: dict[str, str],
+    target_language_options: dict[str, str],
+) -> None:
+    with st.sidebar:
+        st.button(
+            "+ New translation",
+            type="primary",
+            key="sidebar_new_translation",
+            on_click=start_new_translation,
+            width="stretch",
+        )
+
+        with st.container(border=True, key="sidebar_history_card"):
+            collapsed = st.session_state["sidebar_history_collapsed"]
+            with st.container(
+                horizontal=True,
+                horizontal_alignment="distribute",
+                vertical_alignment="center",
+                key="sidebar_history_header",
+            ):
+                _sidebar_label("History")
+                st.button(
+                    "",
+                    icon=(
+                        ":material/expand_more:"
+                        if collapsed
+                        else ":material/expand_less:"
+                    ),
+                    type="tertiary",
+                    key="sidebar_history_toggle",
+                    on_click=toggle_history_collapsed,
+                )
+            if not collapsed:
+                _render_history_list(
+                    source_language_options,
+                    target_language_options,
+                )
+
+        with st.container(border=True, key="sidebar_data_shield_card"):
+            st.toggle(
+                "Data shield",
+                key="data_shield_enabled",
+            )
+            st.markdown(
+                '<div class="sidebar-muted">Hides phone, email, PAN, Aadhaar '
+                'and policy numbers from DeepL in pasted text and in PDF, '
+                'Word, PowerPoint and text files. Images and scanned pages '
+                'are blocked while it is on.</div>',
+                unsafe_allow_html=True,
+            )
+
+        with st.container(border=True, key="sidebar_usage"):
+            _sidebar_label("DeepL usage")
+            usage = load_usage()
+            if usage is None:
+                st.markdown(
+                    '<div class="sidebar-muted">Usage unavailable</div>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                count = usage["character_count"]
+                limit = usage["character_limit"]
+                percent = min(100, round(count * 100 / limit)) if limit else 0
+                st.progress(percent / 100)
+                st.markdown(
+                    f'<div class="sidebar-muted">'
+                    f'{format_usage_count(count)} of '
+                    f'{format_usage_count(limit)} used ({percent}%)</div>',
+                    unsafe_allow_html=True,
+                )
+
+
+render_sidebar(source_options, target_options)
+
 
 def swap_languages():
     selected_source = st.session_state.get("deepl_source_language")
@@ -1398,6 +2219,50 @@ source_code = (
     if source_name == "Detect automatically"
     else source_options[source_name]
 )
+opened_history_id = st.session_state.get("sidebar_opened_history_id")
+opened_history = (
+    sidebar_store.get_translation(
+        sidebar_store.DEFAULT_USER,
+        opened_history_id,
+    )
+    if opened_history_id
+    else None
+)
+if opened_history and (
+    opened_history["kind"] == "document"
+    or opened_history["status"] == "Failed"
+):
+    with st.container(border=True):
+        st.subheader(str(opened_history["file_name"]))
+        st.caption(
+            f"{opened_history['source_language']} → "
+            f"{opened_history['target_language']} · "
+            f"{opened_history['status']}"
+        )
+        if opened_history["status"] == "Failed":
+            st.error(
+                str(opened_history.get("error_message")
+                    or "This translation failed.")
+            )
+        elif opened_history["kind"] == "document":
+            try:
+                result_data = sidebar_store.read_result_file(
+                    str(opened_history["result_path"])
+                )
+            except (OSError, ValueError) as error:
+                LOGGER.exception("Could not reopen a document result.")
+                st.error(f"Stored translation unavailable: {error}")
+            else:
+                st.download_button(
+                    "Download translated document",
+                    data=result_data,
+                    file_name=str(opened_history["result_file_name"]),
+                    mime="application/pdf",
+                    type="primary",
+                    icon=":material/download:",
+                    key=f"sidebar_history_download_{opened_history_id}",
+                )
+
 with st.container(horizontal=True, horizontal_alignment="left"):
     st.badge(
         f"{len(target_options)} target languages",
@@ -1406,7 +2271,12 @@ with st.container(horizontal=True, horizontal_alignment="left"):
     )
     st.badge("Text, PDF & documents", icon=":material/folder_open:")
 
-upload_tab, text_tab = st.tabs(["↑  Upload document", "≡  Paste text"])
+upload_tab, text_tab = st.tabs(
+    ["↑  Upload document", "≡  Paste text"],
+    default="↑  Upload document",
+    key="deepl_translation_tabs",
+    on_change="rerun",
+)
 
 with text_tab:
     with st.container(border=True):
@@ -1438,25 +2308,58 @@ with text_tab:
                 disabled=not source_text.strip(),
                 key="deepl_translate_text"
             ):
+                st.session_state.pop("sidebar_opened_history_id", None)
+                shield = (
+                    data_shield.mask(source_text)
+                    if st.session_state["data_shield_enabled"]
+                    else data_shield.ShieldResult(text=source_text)
+                )
                 try:
                     with st.spinner(f"Translating into {target_name}..."):
                         translated_text = translate_text(
                             api_base,
                             api_key,
-                            source_text,
+                            shield.text,
                             target_code,
-                            source_code
+                            source_code,
+                            protect_placeholders=shield.is_masked,
                         )
+                    translated_text = data_shield.restore(
+                        translated_text,
+                        shield,
+                    )
                     st.session_state["deepl_text_result"] = {
                         "text": translated_text,
-                        "signature": (source_text, target_code, source_code)
+                        "signature": (source_text, target_code, source_code),
+                        "shield_summary": data_shield.summary(shield),
                     }
+                    text_excerpt = " ".join(source_text.split()[:6])
+                    record_translation(
+                        file_name=f"Pasted text: {text_excerpt}",
+                        source_language=source_name,
+                        target_language=target_name,
+                        status="Done",
+                        kind="text",
+                        source_text=source_text,
+                        result_text=translated_text,
+                    )
                 except (
                     requests.RequestException,
                     RuntimeError,
-                    ValueError
+                    ValueError,
+                    data_shield.DataShieldError,
                 ) as error:
                     st.error(f"Text translation failed: {error}")
+                    text_excerpt = " ".join(source_text.split()[:6])
+                    record_translation(
+                        file_name=f"Pasted text: {text_excerpt}",
+                        source_language=source_name,
+                        target_language=target_name,
+                        status="Failed",
+                        kind="text",
+                        source_text=source_text,
+                        error_message=str(error),
+                    )
 
         result = st.session_state.get("deepl_text_result")
         current_signature = (source_text, target_code, source_code)
@@ -1470,6 +2373,11 @@ with text_tab:
             st.caption(f"Translation in {target_name}")
             if translated_text:
                 st.success("Translation completed.")
+                if result.get("shield_summary"):
+                    st.caption(
+                        ":material/shield: Data shield kept "
+                        f"{result['shield_summary']} away from DeepL."
+                    )
             st.session_state["deepl_text_result_display"] = translated_text
             st.text_area(
                 "Translation",
@@ -1513,7 +2421,10 @@ with upload_tab:
                 "Files are sent to DeepL for translation. Avoid uploading "
                 "sensitive documents unless your organization allows it."
             ),
-            key="deepl_document_file"
+            key=(
+                "deepl_document_file_"
+                f"{st.session_state['deepl_file_uploader_generation']}"
+            )
         )
         if uploaded_file is not None:
             file_kind = (
@@ -1529,7 +2440,8 @@ with upload_tab:
             api_key,
             target_code,
             target_name,
-            source_code
+            source_code,
+            source_name,
         )
 
 render_feedback_footer()
