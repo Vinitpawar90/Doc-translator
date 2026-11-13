@@ -21,6 +21,7 @@ RUN pip install --no-cache-dir --upgrade pip \
 
 COPY --chown=appuser:appuser backend ./backend
 COPY --chown=appuser:appuser frontend ./frontend
+COPY --chown=appuser:appuser pictures ./pictures
 
 USER appuser
 
